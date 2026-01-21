@@ -1,17 +1,26 @@
+
 import React from 'react';
-import { BrainOutput } from '../types';
+import { BrainOutput, RemixBrainOutput } from '../types';
 import { Brain, Lightbulb, Lock, Palette, Zap } from 'lucide-react';
 
 interface AnalysisCardProps {
   data: BrainOutput;
 }
 
+function isRemixOutput(data: BrainOutput): data is RemixBrainOutput {
+  return (data as RemixBrainOutput).remix_rationale !== undefined && (data as RemixBrainOutput).nano_banana_instructions !== undefined;
+}
+
 const AnalysisCard: React.FC<AnalysisCardProps> = ({ data }) => {
+  if (!isRemixOutput(data)) {
+    return null;
+  }
+
   return (
     <div className="bg-slate-900 text-slate-200 rounded-xl overflow-hidden shadow-xl border border-slate-700">
       <div className="bg-gradient-to-r from-purple-900 to-indigo-900 px-4 py-3 border-b border-slate-700 flex items-center gap-2">
         <Brain className="text-purple-300" size={20} />
-        <h3 className="font-semibold text-white">Gemini 创意总监分析报告</h3>
+        <h3 className="font-semibold text-white">UTen 创意总监分析报告</h3>
       </div>
       
       <div className="p-5 space-y-6">
@@ -19,7 +28,7 @@ const AnalysisCard: React.FC<AnalysisCardProps> = ({ data }) => {
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-indigo-300 text-sm uppercase tracking-wider font-bold">
             <Lightbulb size={16} />
-            <span>创意构思 (Remix Rationale)</span>
+            <span>创意构思 (Creative Rationale)</span>
           </div>
           <p className="text-sm leading-relaxed text-slate-300 bg-slate-800/50 p-3 rounded-lg border border-slate-700/50">
             {data.remix_rationale}

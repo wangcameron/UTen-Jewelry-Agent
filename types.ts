@@ -1,3 +1,4 @@
+
 export type AppMode = 'remix' | 'tryon' | 'custom_model' | 'studio';
 
 // --- Remix Types ---
@@ -14,31 +15,34 @@ export interface RemixBrainOutput {
   nano_banana_instructions: NanoBananaInstructions;
 }
 
-// --- Try-On Types ---
-export interface ModelDnaAnalysis {
-  demographics: string;
-  fashion_style: string;
-  lighting_vibe: string;
-}
-
-export interface TryOnExecution {
-  mode: string;
-  visual_prompt: string;
-  negative_prompt: string;
-  masking_instructions: {
-    areas_to_mask: string[];
-    clean_up_existing: boolean;
-  };
-  parameters: {
-    identity_strength: number;
-    clothing_variation: number;
-    background_variation: number;
-  };
+// --- Try-On Types (Updated for Nano Banana Core) ---
+export interface BillingOption {
+  tier: string;
+  label: string;
+  points: number;
+  desc: string;
 }
 
 export interface TryOnBrainOutput {
-  model_dna_analysis: ModelDnaAnalysis;
-  nano_banana_execution: TryOnExecution;
+  status: string;
+  billing_options: {
+    recommended_tier: string;
+    options: BillingOption[];
+  };
+  creative_analysis: {
+    product_material: string;
+    lighting_strategy: string;
+    anti_plagiarism_note: string;
+  };
+  imagen_instructions: {
+    engine: string;
+    prompts: Array<{
+      id: string;
+      ui_title: string;
+      ui_description: string;
+      master_prompt: string;
+    }>;
+  };
 }
 
 // --- Custom Model Incubation Types ---
@@ -60,6 +64,15 @@ export interface ModelIncubationAnalysis {
     hair_vibe_keywords: string; // Added to emphasize hair analysis as requested
   };
   user_editable_suggestions: string[];
+}
+
+export interface SignedModel {
+  id: string;
+  name: string;
+  coverImage: string;
+  dnaDescription: string;
+  createdAt: number;
+  quality?: string; // New field to indicate 4K upgrade status
 }
 
 // --- Virtual Studio Types ---
@@ -101,4 +114,50 @@ export interface GalleryItem {
   category: AppMode;
   label: string;
   timestamp: number;
+}
+
+// --- Pricing Types ---
+export interface PricingPlan {
+  id: string;
+  name: string;
+  price: number;
+  originalPrice?: number;
+  points: number;
+  maxConcurrency?: number;
+  description?: string;
+  features: string[];
+  recommended?: boolean;
+  monthlyIncubationQuota?: number; // Added: Monthly incubation quota limit
+}
+
+export interface TopUpPack {
+  id: string;
+  price: number;
+  points: number;
+  name: string;
+  desc?: string;
+}
+
+// --- User Center Types ---
+export interface UsageRecord {
+  id: string;
+  description: string;
+  status: string;
+  date: string;
+  pointsChange: number;
+}
+
+export interface BillingRecord {
+  id: string;
+  date: string;
+  category: string;
+  amount: string;
+  status: string;
+}
+
+// --- Auth Types ---
+export interface User {
+  phone: string;
+  inviteCode: string;
+  isLoggedIn: boolean;
 }

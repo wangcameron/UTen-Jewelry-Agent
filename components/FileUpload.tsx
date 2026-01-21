@@ -87,11 +87,11 @@ const FileUpload: React.FC<FileUploadProps> = ({
 
   return (
     <div className="w-full">
-      <div className="flex justify-between items-center mb-2">
-        <label className="block text-sm font-semibold text-gray-900">{label}</label>
+      <div className="flex justify-between items-center mb-3">
+        <label className="block text-sm font-bold text-gray-900 tracking-wide">{label}</label>
         {files.length > 0 && (
-          <span className="text-xs text-red-600 flex items-center gap-1 font-medium">
-            <CheckCircle size={12}/> 已上传 {files.length} 张
+          <span className="text-xs text-emerald-600 flex items-center gap-1 font-medium bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-100">
+            <CheckCircle size={10}/> 已就绪
           </span>
         )}
       </div>
@@ -103,12 +103,12 @@ const FileUpload: React.FC<FileUploadProps> = ({
         onDrop={handleDrop}
         className={`
           relative group cursor-pointer 
-          border-2 border-dashed rounded-xl 
-          transition-all duration-200 ease-in-out
+          rounded-xl 
+          transition-all duration-300 ease-out
           min-h-[12rem] flex flex-col items-center justify-center
-          overflow-hidden bg-white
-          ${isDragging ? 'border-red-500 bg-red-50' : 'border-gray-200 hover:border-red-300 hover:bg-gray-50'}
-          ${files.length > 0 ? 'border-solid border-red-100' : ''}
+          overflow-hidden bg-gray-50
+          ${isDragging ? 'border-2 border-black bg-gray-100' : 'border border-gray-200 hover:border-gray-400 hover:bg-white hover:shadow-sm'}
+          ${files.length > 0 ? 'bg-white' : ''}
         `}
       >
         <input 
@@ -121,33 +121,36 @@ const FileUpload: React.FC<FileUploadProps> = ({
         />
 
         {files.length > 0 ? (
-          <div className="w-full h-full p-2 grid grid-cols-2 gap-2">
+          <div className="w-full h-full p-3 grid grid-cols-2 gap-3 animate-in fade-in zoom-in-95 duration-300">
              {previews.map((url, index) => (
-                <div key={index} className={`relative rounded-lg overflow-hidden group/item shadow-sm border border-gray-100 ${files.length === 1 ? 'col-span-2 h-44' : 'h-32'}`}>
+                <div key={index} className={`relative rounded-lg overflow-hidden group/item shadow-sm border border-gray-100 ${files.length === 1 ? 'col-span-2 h-48' : 'h-32'}`}>
                   <img src={url} alt={`Preview ${index}`} className="w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-black/0 group-hover/item:bg-black/10 transition-colors" />
                   <button 
                     onClick={(e) => removeFile(e, index)}
-                    className="absolute top-1 right-1 p-1 bg-white/80 hover:bg-red-500 hover:text-white text-gray-600 rounded-full transition-colors opacity-0 group-hover/item:opacity-100"
+                    className="absolute top-2 right-2 p-1.5 bg-white text-gray-900 rounded-full transition-all opacity-0 group-hover/item:opacity-100 shadow-sm hover:bg-red-50 hover:text-red-600"
                   >
                     <X size={14} />
                   </button>
                 </div>
              ))}
              {multiple && (!maxFiles || files.length < maxFiles) && (
-               <div className="h-32 rounded-lg border-2 border-dashed border-gray-200 flex items-center justify-center text-gray-400 hover:bg-gray-50 hover:border-gray-300 transition-colors">
+               <div className="h-32 rounded-lg border border-dashed border-gray-300 flex items-center justify-center text-gray-400 hover:bg-gray-50 hover:border-gray-400 transition-all">
                   <Plus size={24} />
                </div>
              )}
           </div>
         ) : (
-          <div className="text-center p-4">
-            <div className="w-12 h-12 rounded-full bg-gray-50 flex items-center justify-center mx-auto mb-3 text-gray-400 group-hover:text-red-600 group-hover:bg-red-50 transition-colors">
-              {multiple ? <ImageIcon size={24} /> : <Upload size={24} />}
+          <div className="text-center p-6 flex flex-col items-center justify-center h-full w-full relative">
+            
+            <div className="w-12 h-12 rounded-full bg-white border border-gray-200 text-gray-400 flex items-center justify-center mx-auto mb-3 shadow-sm group-hover:scale-110 group-hover:border-black group-hover:text-black transition-all">
+                {multiple ? <ImageIcon size={20} /> : <Upload size={20} />}
             </div>
-            <p className="text-sm font-medium text-gray-900">
-              {multiple ? "点击或拖拽上传多张图片" : "点击或拖拽上传图片"}
+            
+            <p className="text-sm font-bold text-gray-900 mb-1">
+              {multiple ? "点击上传多张" : "点击上传图片"}
             </p>
-            <p className="text-xs text-gray-500 mt-1">支持 JPG, PNG</p>
+            <p className="text-xs text-gray-400">支持 JPG, PNG (Max 10MB)</p>
           </div>
         )}
       </div>
