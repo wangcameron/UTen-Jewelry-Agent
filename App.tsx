@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Image as ImageIcon, Sparkles, Loader2, AlertCircle, Download, Layout, Sliders, X, ZoomIn, Shirt, Boxes, UserRound, Grid, Palette, RotateCcw, Camera, Check, Tag, Square, CheckSquare, Layers, Coins, Plus, UserCheck, ScanFace, Bell, LogOut, ChevronDown, Crown, Lock, Calendar, RefreshCcw, PlusCircle, User as UserIcon, Home, Folder, Info, FileText, Shield } from 'lucide-react';
+import { Image as ImageIcon, Sparkles, Loader2, AlertCircle, Download, Layout, Sliders, X, ZoomIn, Shirt, Boxes, UserRound, Grid, Palette, RotateCcw, Camera, Check, Tag, Square, CheckSquare, Layers, Coins, Plus, UserCheck, ScanFace, Bell, LogOut, ChevronDown, Crown, Lock, Calendar, RefreshCcw, PlusCircle, User as UserIcon, Home, Folder, Info, FileText, Shield, Copy, Wand2, Paintbrush } from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import ModelDnaForm from './components/ModelDnaForm';
 import Gallery from './components/Gallery';
@@ -178,8 +178,10 @@ function App() {
     setAspectRatio('3:4');
     setImageCount(1);
     
+    // Set default freedom level based on mode
     if (newMode === 'tryon') setFreedomLevel(0);
     else if (newMode === 'custom_model') setFreedomLevel(10);
+    else if (newMode === 'remix') setFreedomLevel(3); // Default to Vibe Match for Remix
     else setFreedomLevel(5);
   };
 
@@ -278,6 +280,12 @@ function App() {
   const handleGenerate = async () => {
     const cost = calculateTotalCost();
     
+    // Validation for Creative Remix
+    if (mode === 'remix' && freedomLevel === 10 && !instruction.trim()) {
+        setErrorMsg("【创意重组】模式下，必须填写修改指令或提示词。");
+        return;
+    }
+
     if (mode === 'custom_model') {
        if (!isModelStudioUnlocked) return;
        if (remainingQuota <= 0) {
@@ -394,7 +402,8 @@ function App() {
 
       if (freedomLevel === 0 && mode === 'remix') {
         setStatus('generating');
-        const strictPrompt = "Replace the main object in the first image with the product from the second image. Keep the background and lighting of the first image exactly the same.";
+        // Updated Strict Prompt to enforce full product replacement
+        const strictPrompt = "Identify the main product(s) in the reference image (the first image). Replace ALL of them with the provided User Product(s) (subsequent images). Keep the background, lighting, and composition of the reference image EXACTLY the same. Ensure NO original product remains from the reference image.";
         
         const imgs = await generateRemixImage(strictPrompt, prodB64s, imageSize, aspectRatio, imageCount, setProgress, refB64, true, mode);
         
@@ -834,11 +843,11 @@ function App() {
                     {/* Product Upload - Hidden for Custom Model Mode AND Studio Mode (since refFiles is product) */}
                     {mode !== 'custom_model' && mode !== 'studio' && (
                       <FileUpload 
-                        label={mode === 'tryon' ? "您的珠宝产品 (Multiple Allowed)" : "您的产品图 (Product)"}
+                        label={mode === 'tryon' || mode === 'remix' ? "您的珠宝产品 (Multiple Allowed)" : "您的产品图 (Product)"}
                         files={prodFiles} 
                         onFilesChange={setProdFiles}
-                        multiple={true}
-                        maxFiles={mode === 'tryon' ? 5 : 1}
+                        multiple={mode === 'tryon' || mode === 'remix'}
+                        maxFiles={mode === 'tryon' || mode === 'remix' ? 5 : 1}
                       />
                     )}
                   </div>
@@ -904,7 +913,7 @@ function App() {
                     {/* Common Controls (visible for model mode ONLY after extraction) */}
                     { (mode !== 'custom_model' || modelDna) && (
                     <>
-                      {/* Freedom Level Logic - Split for TryOn vs Others */}
+                      {/* Freedom Level Logic - Split for Modes */}
                       {mode === 'tryon' ? (
                         <div>
                           <label className="block text-base font-bold text-gray-800 mb-4">
@@ -938,7 +947,58 @@ function App() {
                             </button>
                           </div>
                         </div>
+                      ) : mode === 'remix' ? (
+                        /* Remix Mode 3-Level Freedom Selector */
+                        <div>
+                          <label className="block text-base font-bold text-gray-800 mb-4">
+                            AI 自由度 (Freedom Level)
+                          </label>
+                          <div className="grid grid-cols-1 gap-3">
+                             {/* Level 1: Strict (0) */}
+                             <button
+                               onClick={() => setFreedomLevel(0)}
+                               className={`flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group hover:border-gray-900 ${freedomLevel === 0 ? 'bg-black text-white border-black ring-1 ring-black' : 'bg-white text-gray-700 border-gray-200'}`}
+                             >
+                                <div className={`p-3 rounded-full ${freedomLevel === 0 ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200 group-hover:text-black'}`}>
+                                   <Copy size={20} />
+                                </div>
+                                <div>
+                                   <h4 className="font-bold text-base">100% 严格复刻 (Strict)</h4>
+                                   <p className={`text-xs mt-1 ${freedomLevel === 0 ? 'text-gray-400' : 'text-gray-500'}`}>仅替换产品，背景与光影完全不变。</p>
+                                </div>
+                             </button>
+
+                             {/* Level 2: Vibe Match (3) */}
+                             <button
+                               onClick={() => setFreedomLevel(3)}
+                               className={`flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group hover:border-gray-900 ${freedomLevel === 3 ? 'bg-black text-white border-black ring-1 ring-black' : 'bg-white text-gray-700 border-gray-200'}`}
+                             >
+                                <div className={`p-3 rounded-full ${freedomLevel === 3 ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200 group-hover:text-black'}`}>
+                                   <Wand2 size={20} />
+                                </div>
+                                <div>
+                                   <h4 className="font-bold text-base">保留风格调性 (Fine-tune)</h4>
+                                   <p className={`text-xs mt-1 ${freedomLevel === 3 ? 'text-gray-400' : 'text-gray-500'}`}>微调构图，完美融合，保留原图氛围。</p>
+                                </div>
+                             </button>
+
+                             {/* Level 3: Creative (10) */}
+                             <button
+                               onClick={() => setFreedomLevel(10)}
+                               className={`flex items-center gap-4 p-4 rounded-2xl border transition-all text-left group hover:border-gray-900 ${freedomLevel === 10 ? 'bg-black text-white border-black ring-1 ring-black' : 'bg-white text-gray-700 border-gray-200'}`}
+                             >
+                                <div className={`p-3 rounded-full ${freedomLevel === 10 ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500 group-hover:bg-gray-200 group-hover:text-black'}`}>
+                                   <Paintbrush size={20} />
+                                </div>
+                                <div>
+                                   <h4 className="font-bold text-base">创意重组 (Creative)</h4>
+                                   <p className={`text-xs mt-1 ${freedomLevel === 10 ? 'text-gray-400' : 'text-gray-500'}`}>必须输入提示词。基于原图生成全新场景。</p>
+                                </div>
+                             </button>
+                          </div>
+                        </div>
                       ) : mode !== 'studio' && (
+                        /* Default Slider for Custom Model */
                         <div>
                           <div className="flex justify-between items-center mb-4">
                             <label className="block text-base font-bold text-gray-800">
@@ -1023,8 +1083,13 @@ function App() {
                       <div className="h-px bg-gray-100 w-full" />
                       <div>
                         <label className="block text-base font-bold text-gray-800 mb-3">
-                          {mode === 'tryon' ? "模特特征/风格指令" : mode === 'studio' ? "拍摄需求 (品牌色/偏好)" : "场景提示词 / 修改指令"}
-                          {freedomLevel > 5 && mode !== 'studio' && <span className="text-red-500 ml-1 text-sm">* 必填</span>}
+                          {mode === 'tryon' ? "模特特征/风格指令" 
+                           : mode === 'studio' ? "拍摄需求 (品牌色/偏好)" 
+                           : mode === 'remix' ? "修改指令 (Creative Prompt)" 
+                           : "场景提示词 / 修改指令"}
+                          
+                          {/* Required Star for Creative Mode */}
+                          {((mode === 'remix' && freedomLevel === 10) || (freedomLevel > 5 && mode !== 'studio')) && <span className="text-red-500 ml-1 text-sm">* 必填</span>}
                         </label>
                         <textarea
                           value={instruction}
@@ -1034,10 +1099,12 @@ function App() {
                             ? (freedomLevel > 0 ? "描述新模特特征：例如‘高冷亚洲超模，黑色丝绒晚礼服’..." : "可选：描述想要强调的氛围...")
                             : mode === 'studio'
                             ? "例如：品牌色是深紫色，希望营造神秘奢华的氛围，不要出现花朵。"
+                            : mode === 'remix' && freedomLevel === 10
+                            ? "【必填】请详细描述您想要生成的新场景元素、材质、光影氛围..."
                             : (freedomLevel > 5 ? "详细描述您想要的画面风格、背景元素..." : "例如：把背景换成大理石材质...")
                           }
                           className={`w-full px-5 py-4 rounded-xl border focus:ring-2 outline-none transition-all resize-none h-28 text-base bg-gray-50 leading-relaxed
-                            ${freedomLevel > 5 && instruction.trim().length === 0 && mode !== 'studio' ? 'border-red-300 focus:border-red-500 focus:ring-red-100' : 'border-gray-200 focus:ring-gray-100 focus:border-black'}
+                            ${(mode === 'remix' && freedomLevel === 10 && !instruction.trim()) ? 'border-red-300 focus:border-red-500 focus:ring-red-100 placeholder:text-red-300' : 'border-gray-200 focus:ring-gray-100 focus:border-black'}
                           `}
                         />
                       </div>

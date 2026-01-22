@@ -1,5 +1,5 @@
 
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { BrainOutput, ImageSize, AspectRatio, AppMode, TryOnBrainOutput, RemixBrainOutput, ModelIncubationAnalysis, StudioBrainOutput, StudioConcept } from "../types";
 import { REMIX_SYSTEM_PROMPT, TRYON_SYSTEM_PROMPT, MODEL_INCUBATION_SYSTEM_PROMPT, STUDIO_SYSTEM_PROMPT } from "../constants";
 import { cleanJsonString } from "../utils/fileUtils";
@@ -20,6 +20,48 @@ export const checkAndSelectApiKey = async (): Promise<void> => {
 const getAIClient = () => {
   // Always create a new client to pick up potentially newly selected keys
   return new GoogleGenAI({ apiKey: process.env.API_KEY });
+};
+
+/**
+ * Retry utility for 503 Overloaded and 500 Internal errors
+ * Retries up to 5 times with exponential backoff + jitter
+ */
+const retryWithBackoff = async <T>(
+  operation: () => Promise<T>, 
+  retries: number = 5, 
+  initialDelay: number = 2000
+): Promise<T> => {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      const isOverloaded = 
+        error?.status === 503 || 
+        error?.code === 503 ||
+        error?.message?.includes('503') || 
+        error?.message?.includes('overloaded') ||
+        error?.message?.includes('UNAVAILABLE');
+
+      const isInternalError = 
+        error?.status === 500 || 
+        error?.code === 500 ||
+        error?.message?.includes('500') ||
+        error?.message?.includes('Internal error') ||
+        error?.message?.includes('INTERNAL');
+
+      if ((!isOverloaded && !isInternalError) || attempt >= retries) {
+        throw error;
+      }
+
+      attempt++;
+      // Exponential backoff: 2s, 4s, 8s, 16s, 32s + random jitter to prevent thundering herd
+      const delay = initialDelay * Math.pow(2, attempt - 1) + (Math.random() * 500);
+      const errorType = isOverloaded ? 'Overloaded (503)' : 'Internal Error (500)';
+      console.warn(`[Gemini Service] ${errorType}. Retrying in ${Math.round(delay)}ms... (Attempt ${attempt}/${retries})`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
 };
 
 /**
@@ -139,14 +181,14 @@ export const analyzeImages = async (
   }
 
   try {
-    const response = await ai.models.generateContent({
+    const response = await retryWithBackoff<GenerateContentResponse>(() => ai.models.generateContent({
       model: "gemini-3-pro-preview",
       contents: contents,
       config: {
         systemInstruction: systemPrompt,
         responseMimeType: "application/json",
       },
-    });
+    }));
 
     const text = response.text || "{}";
     const cleanedText = cleanJsonString(text);
@@ -260,7 +302,8 @@ export const generateRemixImage = async (
       });
     }
 
-    const response = await ai.models.generateContent({
+    // Wrap the individual generation call with retry logic
+    const response = await retryWithBackoff<GenerateContentResponse>(() => ai.models.generateContent({
       model: "gemini-3-pro-image-preview",
       contents: {
         parts: parts
@@ -271,7 +314,7 @@ export const generateRemixImage = async (
           aspectRatio: aspectRatio,
         }
       }
-    });
+    }));
 
     // Extract image
     for (const part of response.candidates?.[0]?.content?.parts || []) {
@@ -328,7 +371,8 @@ export const generateStudioPhotos = async (
                 }
               ];
 
-              const response = await ai.models.generateContent({
+              // Wrap generation with retry logic
+              const response = await retryWithBackoff<GenerateContentResponse>(() => ai.models.generateContent({
                 model: "gemini-3-pro-image-preview",
                 contents: { parts: parts },
                 config: {
@@ -337,7 +381,7 @@ export const generateStudioPhotos = async (
                     aspectRatio: aspectRatio,
                     }
                 }
-              });
+              }));
 
               for (const part of response.candidates?.[0]?.content?.parts || []) {
                 if (part.inlineData) {
@@ -440,7 +484,8 @@ export const generateVirtualModel = async (
       Negative Prompt: ${fullNegativePrompt}
     `});
 
-    const response = await ai.models.generateContent({
+    // Wrap generation with retry logic
+    const response = await retryWithBackoff<GenerateContentResponse>(() => ai.models.generateContent({
       model: "gemini-3-pro-image-preview",
       contents: { parts: parts },
       config: {
@@ -449,7 +494,7 @@ export const generateVirtualModel = async (
           aspectRatio: aspectRatio, 
         }
       }
-    });
+    }));
 
     for (const part of response.candidates?.[0]?.content?.parts || []) {
       if (part.inlineData) {
