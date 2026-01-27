@@ -8,8 +8,22 @@ export const IMAGE_COSTS: Record<ImageSize, number> = {
   '4K': 180    // ¥18.00
 };
 
-export const MODEL_STUDIO_LICENSE_FEE = 980; // ¥98.00 (一次性功能解锁费)
+export const MODEL_STUDIO_LICENSE_FEE = 980; // ¥98.00 (单次孵化费用)
 export const EXTRA_QUOTA_PRICE = 99;         // ¥9.90  (购买单次额外额度)
+
+// Configuration for Incubation Limits (Gen Count / Sign Count)
+export const INCUBATION_LIMITS: Record<string, { gen: number; sign: number }> = {
+  'starter_monthly': { gen: 2, sign: 1 },
+  'starter_annual': { gen: 2, sign: 1 },
+  'pro_monthly': { gen: 3, sign: 1 },
+  'pro_annual': { gen: 3, sign: 1 },
+  'studio_monthly': { gen: 5, sign: 2 },
+  'studio_annual': { gen: 5, sign: 2 },
+  'enterprise_monthly': { gen: 7, sign: 3 },
+  'enterprise_annual': { gen: 7, sign: 3 },
+  // Fallback default
+  'default': { gen: 2, sign: 1 }
+};
 
 export const STUDIO_LOCKED_FEATURES = [
   "解锁 AI 数字模特孵化器 (账号终身有效)",
@@ -57,7 +71,7 @@ export const SUBSCRIPTION_PLANS: PricingPlan[] = [
     monthlyIncubationQuota: 10,
     features: [
       '每月 2,100 积分',
-      // '每月 10 个模特孵化名额', // Removed from display
+      '孵化特权: 生成 2 位 / 签约 1 位',
       '个人商业授权'
     ],
     recommended: false
@@ -73,7 +87,7 @@ export const SUBSCRIPTION_PLANS: PricingPlan[] = [
     monthlyIncubationQuota: 30,
     features: [
       '每月 6,500 积分',
-      // '每月 30 个模特孵化名额', // Removed from display
+      '孵化特权: 生成 3 位 / 签约 1 位',
       '企业商业授权'
     ],
     recommended: true
@@ -89,7 +103,7 @@ export const SUBSCRIPTION_PLANS: PricingPlan[] = [
     monthlyIncubationQuota: 50,
     features: [
       '每月 17,800 积分',
-      // '每月 50 个模特孵化名额', // Removed from display
+      '孵化特权: 生成 5 位 / 签约 2 位',
       '多账号协作'
     ],
     recommended: false
@@ -105,7 +119,7 @@ export const SUBSCRIPTION_PLANS: PricingPlan[] = [
     monthlyIncubationQuota: 100,
     features: [
       '每月 47,600 积分',
-      // '每月 100 个模特孵化名额', // Removed from display
+      '孵化特权: 生成 7 位 / 签约 3 位',
       'API 接入支持'
     ],
     recommended: false

@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Image as ImageIcon, Sparkles, Loader2, AlertCircle, Download, Layout, Sliders, X, ZoomIn, Shirt, Boxes, UserRound, Grid, Palette, RotateCcw, Camera, Check, Tag, Square, CheckSquare, Layers, Coins, Plus, UserCheck, ScanFace, Bell, LogOut, ChevronDown, Crown, Lock, Calendar, RefreshCcw, PlusCircle, User as UserIcon, Home, Folder, Info, FileText, Shield, Copy, Wand2, Paintbrush } from 'lucide-react';
+import { Image as ImageIcon, Sparkles, Loader2, AlertCircle, Download, Layout, Sliders, X, ZoomIn, Shirt, Boxes, UserRound, Grid, Palette, RotateCcw, Camera, Check, Tag, Square, CheckSquare, Layers, Coins, Plus, UserCheck, ScanFace, Bell, LogOut, ChevronDown, Crown, Lock, Calendar, RefreshCcw, PlusCircle, User as UserIcon, Home, Folder, Info, FileText, Shield, Copy, Wand2, Paintbrush, Timer, Award, PenTool, ArrowRight, Ban } from 'lucide-react';
 import FileUpload from './components/FileUpload';
 import ModelDnaForm from './components/ModelDnaForm';
 import Gallery from './components/Gallery';
@@ -13,7 +13,7 @@ import InstructionGuide from './components/InstructionGuide';
 import { BrainOutput, ImageSize, AppStatus, AspectRatio, AppMode, TryOnBrainOutput, RemixBrainOutput, ModelIncubationAnalysis, GalleryItem, StudioBrainOutput, User, SignedModel, PricingPlan } from './types';
 import { analyzeImages, generateRemixImage, generateVirtualModel, generateStudioPhotos } from './services/geminiService';
 import { fileToBase64 } from './utils/fileUtils';
-import { IMAGE_COSTS, MODEL_STUDIO_LICENSE_FEE, EXTRA_QUOTA_PRICE, STUDIO_LOCKED_FEATURES, SUBSCRIPTION_PLANS } from './constants';
+import { IMAGE_COSTS, MODEL_STUDIO_LICENSE_FEE, EXTRA_QUOTA_PRICE, INCUBATION_LIMITS, SUBSCRIPTION_PLANS } from './constants';
 
 const RESOLUTION_LABELS: Record<ImageSize, string> = {
   '1K': '1K 标清版',
@@ -64,15 +64,13 @@ function App() {
   const [currentPlan, setCurrentPlan] = useState<PricingPlan>(SUBSCRIPTION_PLANS[0]); // Default to Starter
 
   // --- Model Studio Access & Quota State ---
-  const monthlyQuota = currentPlan.monthlyIncubationQuota || 10;
+  const [incubationStep, setIncubationStep] = useState<'intro' | 'idle' | 'analyzing' | 'dna_ready' | 'generating' | 'selecting' | 'signed'>('intro');
   
-  const [isModelStudioUnlocked, setIsModelStudioUnlocked] = useState(false);
-  const [incubatedThisMonth, setIncubatedThisMonth] = useState(10); // Mock usage (full for testing)
-  const [extraQuota, setExtraQuota] = useState(0); 
+  // Custom Model Session State
+  const [candidateImages, setCandidateImages] = useState<string[]>([]);
+  const [selectedCandidateIndices, setSelectedCandidateIndices] = useState<number[]>([]);
+  const [showSigningCeremony, setShowSigningCeremony] = useState(false);
   const [showLimitModal, setShowLimitModal] = useState(false);
-
-  // Calculate remaining quota
-  const remainingQuota = (monthlyQuota + extraQuota) - incubatedThisMonth;
 
   // File states
   const [refFiles, setRefFiles] = useState<File[]>([]);
@@ -87,6 +85,12 @@ function App() {
   const [status, setStatus] = useState<AppStatus>('idle');
   const [progress, setProgress] = useState<number>(0); // 0-100
   
+  // Timer States
+  const [startTime, setStartTime] = useState<number>(0);
+  const [elapsedTime, setElapsedTime] = useState<number>(0);
+  const [estimatedTime, setEstimatedTime] = useState<number>(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // State for different output types
   const [brainOutput, setBrainOutput] = useState<BrainOutput | null>(null);
   // Specifically for editing model DNA
@@ -104,6 +108,8 @@ function App() {
   const [isZoomOpen, setIsZoomOpen] = useState(false);
   const [zoomImageSrc, setZoomImageSrc] = useState<string | null>(null);
 
+  const monthlyQuota = currentPlan.monthlyIncubationQuota || 0; // Derived variable
+
   // --- Daily Login Bonus Logic ---
   useEffect(() => {
     if (user?.isLoggedIn) {
@@ -120,6 +126,21 @@ function App() {
       }
     }
   }, [user?.isLoggedIn]);
+
+  // Timer Effect
+  useEffect(() => {
+    if ((status === 'analyzing' || status === 'generating') && startTime > 0) {
+      timerRef.current = setInterval(() => {
+        setElapsedTime(Math.floor((Date.now() - startTime) / 1000));
+      }, 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, [status, startTime]);
 
   // --- Handlers ---
 
@@ -156,7 +177,9 @@ function App() {
     if (mode === 'studio') {
         return baseCost * imageCount * selectedConceptIds.length;
     } else if (mode === 'custom_model') {
-        return baseCost;
+        // If we are past 'intro', the session is already paid for.
+        // Generation cost is 0 or included in the 980 BP session fee.
+        return 0; 
     } else {
         return baseCost * imageCount;
     }
@@ -165,6 +188,9 @@ function App() {
   const handleModeChange = (newMode: AppMode) => {
     setMode(newMode);
     setStatus('idle');
+    setIncubationStep(newMode === 'custom_model' ? 'intro' : 'idle');
+    setCandidateImages([]);
+    setSelectedCandidateIndices([]);
     setProgress(0);
     setFinalImage(null);
     setGeneratedImages([]);
@@ -177,16 +203,20 @@ function App() {
     setInstruction('');
     setAspectRatio('3:4');
     setImageCount(1);
+    setElapsedTime(0);
     
     // Set default freedom level based on mode
     if (newMode === 'tryon') setFreedomLevel(0);
-    else if (newMode === 'custom_model') setFreedomLevel(10);
+    else if (newMode === 'custom_model') setFreedomLevel(0); // Default to Clone
     else if (newMode === 'remix') setFreedomLevel(3); // Default to Vibe Match for Remix
     else setFreedomLevel(5);
   };
 
   const handleReset = () => {
     setStatus('idle');
+    setIncubationStep(mode === 'custom_model' ? 'intro' : 'idle'); // Reset to intro for custom model
+    setCandidateImages([]);
+    setSelectedCandidateIndices([]);
     setProgress(0);
     setFinalImage(null);
     setGeneratedImages([]);
@@ -197,39 +227,13 @@ function App() {
     setRefFiles([]);
     setProdFiles([]);
     setInstruction('');
+    setElapsedTime(0);
   };
 
-  const handleUnlockStudio = () => {
-    if (userPoints < MODEL_STUDIO_LICENSE_FEE) {
-      alert("余额不足，请充值。");
-      setShowPricingModal(true);
-      return;
-    }
-    
-    setUserPoints(prev => prev - MODEL_STUDIO_LICENSE_FEE);
-    setIsModelStudioUnlocked(true);
-    setIncubatedThisMonth(0); 
-    
-    alert(
-      `🎉 解锁成功！(账号终身有效)\n\n` +
-      `您当前的 [${currentPlan.name}] 包含每月 ${monthlyQuota} 个免费孵化名额。\n` +
-      `💡 名额将在每月 1 日自动重置。\n` +
-      `您本月剩余可用名额: ${monthlyQuota} 个`
-    );
-  };
-
-  const handleBuyExtraQuota = () => {
-    if (userPoints < EXTRA_QUOTA_PRICE) {
-      alert("余额不足，请充值。");
-      setShowPricingModal(true);
-      return;
-    }
-
-    setUserPoints(prev => prev - EXTRA_QUOTA_PRICE);
-    setExtraQuota(prev => prev + 1);
-    setShowLimitModal(false);
-    
-    alert(`✅ 补充成功！\n本月额度 +1，您现在可以继续生成了。`);
+  const startTimer = (estimatedSecs: number) => {
+    setStartTime(Date.now());
+    setElapsedTime(0);
+    setEstimatedTime(estimatedSecs);
   };
 
   const handleAnalysis = async () => {
@@ -239,6 +243,7 @@ function App() {
     }
     
     setStatus('analyzing');
+    startTimer(8); // Analysis usually takes 5-8s
     setProgress(0);
     setErrorMsg(null);
     setBrainOutput(null);
@@ -255,6 +260,7 @@ function App() {
       
       if (mode === 'custom_model') {
         setModelDna(analysis as ModelIncubationAnalysis);
+        setIncubationStep('dna_ready');
         setStatus('idle');
       } else if (mode === 'studio') {
         const studioOutput = analysis as StudioBrainOutput;
@@ -268,6 +274,8 @@ function App() {
        console.error(e);
        setStatus('error');
        setErrorMsg(e.message);
+    } finally {
+       setStartTime(0); // Stop timer
     }
   };
 
@@ -276,6 +284,107 @@ function App() {
       prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
     );
   };
+
+  // --- CUSTOM MODEL: Casting Session Logic ---
+  
+  const getIncubationLimits = () => {
+     return INCUBATION_LIMITS[currentPlan.id] || INCUBATION_LIMITS['default'];
+  };
+
+  // NEW: Pay to unlock session logic
+  const handleUnlockSession = () => {
+      if (userPoints < MODEL_STUDIO_LICENSE_FEE) {
+          setShowPricingModal(true);
+          return;
+      }
+      
+      // Deduct points immediately
+      setUserPoints(prev => prev - MODEL_STUDIO_LICENSE_FEE);
+      // Unlock the UI
+      setIncubationStep('idle');
+  };
+
+  const handleGenerateCandidates = async () => {
+     if (!modelDna || refFiles.length === 0) return;
+
+     const limits = getIncubationLimits();
+     const maxGen = limits.gen;
+     
+     // Check if we have reached the limit of candidates
+     if (candidateImages.length >= maxGen) {
+         setErrorMsg(`已达到当前会员等级的生成上限 (${maxGen}位)`);
+         return;
+     }
+
+     setStatus('generating');
+     setIncubationStep('generating');
+     // Estimate 15s for 1 model
+     startTimer(15);
+     setProgress(0);
+     setErrorMsg(null);
+     // Note: We don't reset candidateImages here anymore, we append.
+
+     try {
+         const refB64 = await fileToBase64(refFiles[0]);
+         const imgs = await generateVirtualModel(
+             modelDna, 
+             refB64, 
+             freedomLevel, 
+             imageSize, 
+             aspectRatio, 
+             1, // Generate ONE at a time
+             setProgress
+         );
+         
+         setCandidateImages(prev => [...prev, ...imgs]);
+         setIncubationStep('selecting');
+         setStatus('success');
+     } catch (e: any) {
+         console.error(e);
+         setStatus('error');
+         setErrorMsg(e.message);
+         // Restore state to allow retry
+         setIncubationStep(candidateImages.length > 0 ? 'selecting' : 'dna_ready');
+     } finally {
+         setStartTime(0);
+     }
+  };
+
+  // Revised: Handle signing a specific candidate directly
+  const handleSignSpecificCandidate = (index: number) => {
+      const limits = getIncubationLimits();
+      const signLimit = limits.sign;
+
+      if (selectedCandidateIndices.length >= signLimit) {
+          setErrorMsg(`签约人数已达上限 (${signLimit}位)，请先取消其他签约。`);
+          return;
+      }
+
+      if (!selectedCandidateIndices.includes(index)) {
+          setSelectedCandidateIndices(prev => [...prev, index]);
+      }
+      
+      // Add to gallery immediately upon signing
+      const img = candidateImages[index];
+      if (img) addToGallery(img, 'custom_model', `签约模特 #${index + 1}`);
+      
+      setShowSigningCeremony(true);
+      setIncubationStep('signed');
+  };
+
+  const handleBuyExtraQuota = () => {
+    if (userPoints < EXTRA_QUOTA_PRICE) {
+      setShowLimitModal(false);
+      setShowPricingModal(true);
+      return;
+    }
+    
+    setUserPoints(prev => prev - EXTRA_QUOTA_PRICE);
+    setShowLimitModal(false);
+    alert("购买成功！您已获得 1 个额外孵化名额。");
+  };
+
+  // --- GENERAL GENERATE HANDLER ---
 
   const handleGenerate = async () => {
     const cost = calculateTotalCost();
@@ -287,10 +396,14 @@ function App() {
     }
 
     if (mode === 'custom_model') {
-       if (!isModelStudioUnlocked) return;
-       if (remainingQuota <= 0) {
-         setShowLimitModal(true);
-         return;
+       if (!modelDna) {
+          await handleAnalysis();
+          return; 
+       } else {
+          // In Custom Model mode, "Generate" now implies "Incubate Next Candidate"
+          // We check limits inside the function
+          await handleGenerateCandidates();
+          return;
        }
     }
 
@@ -309,12 +422,9 @@ function App() {
        return;
     }
     
-    if (mode === 'custom_model' && !modelDna) {
-       await handleAnalysis();
-       return; 
-    }
-
     setUserPoints(prev => prev - cost);
+
+    // --- EXECUTION START ---
 
     if (mode === 'studio') {
         if (!brainOutput) {
@@ -329,6 +439,9 @@ function App() {
              }
 
              setStatus('generating');
+             // Estimate: 12s per image
+             const totalImgs = selectedConceptIds.length * imageCount;
+             startTimer(totalImgs * 12);
              setProgress(0);
              setGeneratedImages([]);
              setErrorMsg(null);
@@ -361,35 +474,16 @@ function App() {
                 setStatus('error');
                 setErrorMsg(e.message);
                 setUserPoints(prev => prev + cost);
+             } finally {
+               setStartTime(0);
              }
         }
         return;
     }
 
-    if (mode === 'custom_model' && modelDna) {
-        setStatus('generating');
-        setProgress(0);
-        setErrorMsg(null);
-        setGeneratedImages([]);
-        try {
-            const refB64 = await fileToBase64(refFiles[0]);
-            const imgs = await generateVirtualModel(modelDna, refB64, freedomLevel, imageSize, aspectRatio, setProgress);
-            setGeneratedImages(imgs);
-            imgs.forEach((img) => {
-               addToGallery(img, 'custom_model', "定妆照 (Master)");
-            });
-            setStatus('success');
-            setIncubatedThisMonth(prev => prev + 1);
-        } catch(e: any) {
-            console.error(e);
-            setStatus('error');
-            setErrorMsg(e.message);
-            setUserPoints(prev => prev + cost);
-        }
-        return;
-    }
-
+    // Remix / Try-on Logic
     setStatus('analyzing'); 
+    startTimer(8 + (imageCount * 12)); // Analysis + Generation estimate
     setProgress(0);
     setErrorMsg(null);
     setFinalImage(null);
@@ -414,7 +508,9 @@ function App() {
         setStatus('success');
         return;
       }
-
+      
+      // If TryOn Level 0, we can also skip analysis partially or make it faster, 
+      // but current flow analyzes first to get prompt structure.
       const analysis = await analyzeImages(refB64, prodB64s, userInstr, freedomLevel, mode);
       setBrainOutput(analysis);
       
@@ -464,6 +560,8 @@ function App() {
       setStatus('error');
       setErrorMsg(e.message || "发生未知错误。");
       setUserPoints(prev => prev + cost);
+    } finally {
+        setStartTime(0);
     }
   };
 
@@ -474,6 +572,16 @@ function App() {
 
   const handleDeleteGalleryItem = (id: string) => {
     setGalleryItems(prev => prev.filter(item => item.id !== id));
+  };
+
+  // Check if zoom image needs watermark
+  const isProtectedImage = (src: string) => {
+      // If image is in candidateImages list AND NOT in selectedCandidateIndices list
+      if (mode === 'custom_model' && candidateImages.includes(src)) {
+          const idx = candidateImages.indexOf(src);
+          return !selectedCandidateIndices.includes(idx);
+      }
+      return false;
   };
 
   const renderStudioReview = () => {
@@ -651,7 +759,7 @@ function App() {
         
         {/* Top Left Logo (Ref Request) */}
         <div className="absolute top-10 left-10 flex items-center gap-2 select-none">
-            <div className="bg-black text-white p-2 rounded-lg">
+            <div className="bg-black text-white p-2.5 rounded-lg">
                 <Sparkles size={20} fill="currentColor" />
             </div>
             <span className="text-2xl font-bold tracking-tight text-black">UTen<span className="text-red-600">幼狮</span></span>
@@ -763,70 +871,80 @@ function App() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-24">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-24 relative items-start">
               
-              {/* Left Column: Inputs */}
-              <div className="lg:col-span-4 space-y-12 relative">
-                {/* ... (Existing Left Column Code) ... */}
-                {/* === Custom Model Mode Quota Block & Lock Overlay === */}
-                {mode === 'custom_model' && (
-                  <>
-                     {/* Lock Overlay */}
-                     {!isModelStudioUnlocked && (
-                        <div className="absolute inset-0 z-50 flex items-center justify-center bg-[#FAFAFA]/90 backdrop-blur-md rounded-2xl">
-                          <div className="bg-white border border-gray-200 p-8 rounded-3xl max-w-sm w-full text-center shadow-2xl">
-                            <div className="w-20 h-20 bg-black rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg">
-                              <Lock className="w-8 h-8 text-white" />
-                            </div>
-                            
-                            <h2 className="text-2xl font-black text-black mb-3 tracking-tight">解锁定制模特工作室</h2>
-                            <p className="text-gray-500 mb-8 text-base font-medium leading-relaxed">
-                              一次性付费，永久拥有您的 AI 模特孵化团队
-                            </p>
-
-                            {/* Feature List */}
-                            <div className="bg-gray-50 rounded-xl p-6 mb-8 text-left border border-gray-100">
-                              <ul className="space-y-4">
-                                {STUDIO_LOCKED_FEATURES.map((feature, i) => (
-                                  <li key={i} className="flex items-start gap-3 text-base text-gray-700 font-medium">
-                                    <span className="text-red-600 mt-1 font-bold text-lg">✦</span>
-                                    <span>{feature}</span>
-                                  </li>
-                                ))}
-                                <li className="flex items-start gap-3 text-base text-black font-bold">
-                                  <span className="text-red-600 mt-1 text-lg">✦</span>
-                                  <span>
-                                    每月获赠 {monthlyQuota} 个免费孵化名额
-                                  </span>
-                                </li>
-                              </ul>
-                            </div>
-
-                            <div className="space-y-4">
-                              <div className="text-center">
-                                <span className="text-gray-400 text-sm line-through mr-3 font-medium">原价 1990 BP</span>
-                                <span className="text-4xl font-black text-black">{MODEL_STUDIO_LICENSE_FEE} BP</span>
-                              </div>
-                              
-                              <button
-                                onClick={handleUnlockStudio}
-                                className="w-full py-4 bg-red-600 text-white font-bold text-lg rounded-xl hover:bg-red-700 transition-all shadow-lg shadow-red-600/20 active:scale-95"
-                              >
-                                立即解锁功能
-                              </button>
-                            </div>
-                          </div>
+              {/* --- CUSTOM MODEL INTRO OVERLAY --- */}
+              {mode === 'custom_model' && incubationStep === 'intro' && (
+                 <div className="absolute inset-0 z-30 flex items-start justify-center backdrop-blur-sm bg-white/50 rounded-3xl border border-gray-100 p-10 h-full">
+                    <div className="bg-white rounded-3xl shadow-2xl p-10 max-w-2xl w-full border border-gray-100 text-center relative overflow-hidden">
+                        <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-red-600 via-purple-600 to-red-600" />
+                        
+                        <div className="w-20 h-20 bg-black text-white rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg">
+                           <UserRound size={36} />
                         </div>
-                     )}
-                  </>
-                )}
 
+                        <h2 className="text-4xl font-black text-gray-900 mb-2 tracking-tight">AI 模特孵化工作室</h2>
+                        <p className="text-gray-500 text-lg mb-10 font-medium">定制品牌专属面孔 · 打造独家视觉资产</p>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10 text-left">
+                            <div className="bg-gray-50 p-6 rounded-2xl border border-gray-100">
+                                <div className="text-gray-400 text-xs font-bold uppercase tracking-wider mb-2">本次费用 (Cost)</div>
+                                <div className="text-3xl font-black text-black">980 BP <span className="text-sm font-medium text-gray-400">/ 次</span></div>
+                                <p className="text-xs text-gray-400 mt-2">单次付费解锁孵化流程</p>
+                            </div>
+                            <div 
+                                onClick={() => setShowPricingModal(true)}
+                                className="bg-gray-50 p-6 rounded-2xl border border-gray-100 cursor-pointer hover:bg-white hover:shadow-lg hover:border-gray-200 transition-all group relative"
+                            >
+                                <div className="flex justify-between items-center mb-4">
+                                    <div className="text-gray-400 text-xs font-bold uppercase tracking-wider">您的权益 ({currentPlan.name})</div>
+                                    <Crown size={16} className="text-gray-300 group-hover:text-yellow-500 transition-colors" fill="currentColor" />
+                                </div>
+                                <ul className="space-y-3">
+                                    <li className="flex justify-between text-sm font-medium">
+                                        <span className="text-gray-600">生成候选人:</span>
+                                        <span className="text-black font-bold">{INCUBATION_LIMITS[currentPlan.id]?.gen || 2} 位</span>
+                                    </li>
+                                    <li className="flex justify-between text-sm font-medium">
+                                        <span className="text-gray-600">可签约人数:</span>
+                                        <span className="text-red-600 font-bold">{INCUBATION_LIMITS[currentPlan.id]?.sign || 1} 位</span>
+                                    </li>
+                                </ul>
+                                <div className="mt-4 pt-3 border-t border-gray-200 flex items-center justify-between text-xs text-gray-400 group-hover:text-black font-medium transition-colors">
+                                    <span>查看会员权益对比</span>
+                                    <ArrowRight size={14} className="group-hover:translate-x-1 transition-transform" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="bg-red-50 text-red-800 text-sm p-4 rounded-xl mb-8 flex items-start gap-3 text-left">
+                            <Info size={18} className="shrink-0 mt-0.5" />
+                            <p>
+                                规则提示：本次孵化将为您生成多位候选人，您只能从中选择规定数量的模特进行签约保存。
+                                <span className="font-bold">未签约的候选人将在会话结束后销毁。</span>
+                            </p>
+                        </div>
+
+                        <button 
+                            onClick={handleUnlockSession}
+                            className="w-full py-4 bg-black text-white rounded-xl font-bold text-lg hover:bg-gray-800 transition-all shadow-xl flex items-center justify-center gap-2 group"
+                        >
+                            <span>支付 980 BP 并开始</span>
+                            <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                        </button>
+                    </div>
+                 </div>
+              )}
+
+              {/* Left Column: Inputs */}
+              <div className={`lg:col-span-4 space-y-12 relative ${mode === 'custom_model' && incubationStep === 'intro' ? 'blur-sm opacity-50 pointer-events-none' : ''}`}>
+                
                 <section>
                   <h2 className="text-2xl font-black text-black mb-6 pl-1 flex items-center gap-2">
                     <span className="w-2 h-8 bg-red-600 rounded-full inline-block"></span>
                     {mode === 'custom_model' ? '模特孵化' : mode === 'tryon' ? '模特与产品' : mode === 'studio' ? '产品拍摄' : '素材上传'}
                   </h2>
-                  <div className={`space-y-6 ${mode === 'custom_model' && !isModelStudioUnlocked ? 'opacity-20 pointer-events-none filter blur-sm' : ''}`}>
+                  <div className={`space-y-6`}>
                     <FileUpload 
                       label={
                           mode === 'custom_model' ? "上传模特原型 (Prototype)" 
@@ -838,6 +956,7 @@ function App() {
                       onFilesChange={setRefFiles}
                       multiple={false}
                       maxFiles={1}
+                      minimal={true}
                     />
                     
                     {/* Product Upload - Hidden for Custom Model Mode AND Studio Mode (since refFiles is product) */}
@@ -848,6 +967,7 @@ function App() {
                         onFilesChange={setProdFiles}
                         multiple={mode === 'tryon' || mode === 'remix'}
                         maxFiles={mode === 'tryon' || mode === 'remix' ? 5 : 1}
+                        minimal={true}
                       />
                     )}
                   </div>
@@ -860,29 +980,8 @@ function App() {
                     {mode === 'custom_model' ? '基因重组' : mode === 'studio' ? '摄影指导' : '智能控制'}
                   </h2>
                   
-                  <div className={`space-y-8 bg-white p-8 rounded-3xl border border-gray-100 shadow-md ${mode === 'custom_model' && !isModelStudioUnlocked ? 'opacity-20 pointer-events-none filter blur-sm' : ''}`}>
+                  <div className={`space-y-8 bg-white p-8 rounded-3xl border border-gray-100 shadow-md`}>
                     
-                    {/* Quota Bar for Custom Model */}
-                    {mode === 'custom_model' && isModelStudioUnlocked && (
-                       <div className="flex items-center justify-between bg-black p-4 rounded-xl border border-gray-800 shadow-lg">
-                          <div className="flex items-center gap-3">
-                            <div className={`p-2 rounded-lg ${remainingQuota > 0 ? 'bg-white/20 text-white' : 'bg-red-600/20 text-red-600'}`}>
-                              <Calendar size={18} />
-                            </div>
-                            <div className="text-sm text-gray-300 font-medium">
-                              本月孵化名额: 
-                              <span className={`font-bold ml-2 text-base ${remainingQuota > 0 ? 'text-white' : 'text-red-500'}`}>
-                                {incubatedThisMonth} / {monthlyQuota + extraQuota}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="text-xs text-gray-500 flex items-center gap-1.5 font-medium">
-                            <RefreshCcw size={12} />
-                            下月1日重置
-                          </div>
-                        </div>
-                    )}
-
                     {/* Phase 1 Button for Custom Model */}
                     {mode === 'custom_model' && !modelDna && (
                       <button
@@ -926,10 +1025,10 @@ function App() {
                             >
                                <div className="flex items-center gap-2 mb-2">
                                   <UserCheck size={20} className={freedomLevel === 0 ? 'text-white' : 'text-gray-500'} />
-                                  <span className="font-bold text-base">保持模特原貌</span>
+                                  <span className="font-bold text-base">智能佩戴 (Smart)</span>
                                </div>
                                <div className={`text-xs leading-relaxed font-medium ${freedomLevel === 0 ? 'text-gray-300' : 'text-gray-400'}`}>
-                                  100% 严格复刻原图，仅更换产品。
+                                  保持脸部/背景100%一致。自动调整姿势以展示所有珠宝。
                                </div>
                             </button>
                             
@@ -939,10 +1038,10 @@ function App() {
                             >
                                <div className="flex items-center gap-2 mb-2">
                                   <ScanFace size={20} className={freedomLevel > 0 ? 'text-white' : 'text-gray-500'} />
-                                  <span className="font-bold text-base">数字替身重绘</span>
+                                  <span className="font-bold text-base">数字替身 (Remix)</span>
                                </div>
                                <div className={`text-xs leading-relaxed font-medium ${freedomLevel > 0 ? 'text-gray-300' : 'text-gray-400'}`}>
-                                  80% 神似 + 20% 变化。避免肖像权风险。
+                                  生成神似的新模特 (Copyright Free)。自由度更高。
                                </div>
                             </button>
                           </div>
@@ -997,18 +1096,56 @@ function App() {
                              </button>
                           </div>
                         </div>
-                      ) : mode !== 'studio' && (
-                        /* Default Slider for Custom Model */
+                      ) : mode === 'custom_model' ? (
+                        /* Custom Model 3-Level Selector (Updated) */
+                        <div>
+                          <label className="block text-base font-bold text-gray-800 mb-4">
+                            基因重组程度 (Gene Remix Level)
+                          </label>
+                          <div className="grid grid-cols-1 gap-3">
+                             <button
+                               onClick={() => setFreedomLevel(0)}
+                               className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${freedomLevel === 0 ? 'bg-black text-white border-black' : 'bg-white text-gray-700 hover:border-gray-400'}`}
+                             >
+                               <div className="text-left">
+                                 <div className="font-bold text-base">完全复刻 (Clone)</div>
+                                 <div className={`text-xs mt-1 ${freedomLevel === 0 ? 'text-gray-400' : 'text-gray-500'}`}>严格保留原模特五官特征，仅优化肤质。</div>
+                               </div>
+                               <div className="text-xl font-bold">0%</div>
+                             </button>
+
+                             <button
+                               onClick={() => setFreedomLevel(5)}
+                               className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${freedomLevel === 5 ? 'bg-black text-white border-black' : 'bg-white text-gray-700 hover:border-gray-400'}`}
+                             >
+                               <div className="text-left">
+                                 <div className="font-bold text-base">气质神似 (Vibe)</div>
+                                 <div className={`text-xs mt-1 ${freedomLevel === 5 ? 'text-gray-400' : 'text-gray-500'}`}>神态相似的"姐妹"脸。五官有明显区别。</div>
+                               </div>
+                               <div className="text-xl font-bold">50%</div>
+                             </button>
+
+                             <button
+                               onClick={() => setFreedomLevel(10)}
+                               className={`flex items-center justify-between p-4 rounded-2xl border transition-all ${freedomLevel === 10 ? 'bg-black text-white border-black' : 'bg-white text-gray-700 hover:border-gray-400'}`}
+                             >
+                               <div className="text-left">
+                                 <div className="font-bold text-base">全新面孔 (New)</div>
+                                 <div className={`text-xs mt-1 ${freedomLevel === 10 ? 'text-gray-400' : 'text-gray-500'}`}>仅保留人种/年龄设定。生成完全陌生人。</div>
+                               </div>
+                               <div className="text-xl font-bold">100%</div>
+                             </button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Default Slider for Studio */
                         <div>
                           <div className="flex justify-between items-center mb-4">
                             <label className="block text-base font-bold text-gray-800">
                               AI 自由度: {freedomLevel}
                             </label>
                             <span className={`text-xs font-bold px-2.5 py-1 rounded border ${freedomLevel === 0 ? 'bg-red-50 text-red-700 border-red-200' : 'bg-white text-gray-600 border-gray-200'}`}>
-                              {mode === 'custom_model'
-                                ? (freedomLevel === 0 ? "复刻原型" : freedomLevel <= 3 ? "微调神态" : "全新面孔")
-                                : (freedomLevel === 0 ? "100% 严格复刻" : "创意重组")
-                              }
+                              100% 严格复刻
                             </span>
                           </div>
                           <input 
@@ -1021,13 +1158,62 @@ function App() {
                             className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-black hover:accent-gray-800"
                           />
                           <div className="flex justify-between text-xs uppercase font-bold text-gray-400 mt-2 tracking-wide">
-                            <span>{mode === 'custom_model' ? 'Clone (0)' : 'Strict (0)'}</span>
-                            <span>{mode === 'custom_model' ? 'New (10)' : 'Creative (10)'}</span>
+                            <span>Strict (0)</span>
+                            <span>Creative (10)</span>
                           </div>
                         </div>
                       )}
 
                       {mode !== 'studio' && <div className="h-px bg-gray-100 w-full" />}
+
+                      {/* NEW: Prompt Input */}
+                      {(mode === 'tryon' || mode === 'remix' || mode === 'studio') && (
+                          <div>
+                              <label className="block text-base font-bold text-gray-800 mb-3">
+                                  {mode === 'studio' ? '拍摄需求 (Requirements)' : 'AI 提示词 (Prompt)'}
+                              </label>
+                              <textarea
+                                  value={instruction}
+                                  onChange={(e) => setInstruction(e.target.value)}
+                                  placeholder={
+                                      mode === 'studio' ? "例如：想要一种神秘的高级感，背景使用黑色丝绒..." :
+                                      mode === 'tryon' ? "例如：模特眼神看向镜头，自信微笑，佩戴在左手食指。背景为简约高级灰..." :
+                                      "例如：赛博朋克风格，霓虹灯光..."
+                                  }
+                                  className="w-full p-4 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-black outline-none transition-all resize-none placeholder:text-gray-400"
+                                  rows={3}
+                              />
+                          </div>
+                      )}
+
+                      {/* NEW: Resolution Selector */}
+                      {(mode === 'tryon' || mode === 'remix' || mode === 'studio') && (
+                          <div>
+                              <label className="block text-base font-bold text-gray-800 mb-3 flex justify-between">
+                                  <span>画质选择</span>
+                                  <span className="text-gray-400 font-normal text-xs mt-1">高画质消耗更多积分</span>
+                              </label>
+                              <div className="grid grid-cols-3 gap-3">
+                                  {(['1K', '2K', '4K'] as ImageSize[]).map((size) => (
+                                      <button
+                                          key={size}
+                                          onClick={() => setImageSize(size)}
+                                          className={`
+                                              py-3 px-2 rounded-xl text-sm font-bold transition-all border flex flex-col items-center justify-center gap-1
+                                              ${imageSize === size
+                                                  ? 'bg-black text-white border-black shadow-md'
+                                                  : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}
+                                          `}
+                                      >
+                                          <span>{size}</span>
+                                          <span className={`text-[10px] font-normal ${imageSize === size ? 'text-gray-300' : 'text-gray-400'}`}>
+                                              {size === '1K' ? '标清' : size === '2K' ? '高清' : '超清'}
+                                          </span>
+                                      </button>
+                                  ))}
+                              </div>
+                          </div>
+                      )}
                       
                       {/* Image Count Selector - Hidden for Custom Model Mode */}
                       {mode !== 'custom_model' && (
@@ -1078,62 +1264,6 @@ function App() {
                         </div>
                       </div>
 
-                      {mode !== 'custom_model' && (
-                      <>
-                      <div className="h-px bg-gray-100 w-full" />
-                      <div>
-                        <label className="block text-base font-bold text-gray-800 mb-3">
-                          {mode === 'tryon' ? "模特特征/风格指令" 
-                           : mode === 'studio' ? "拍摄需求 (品牌色/偏好)" 
-                           : mode === 'remix' ? "修改指令 (Creative Prompt)" 
-                           : "场景提示词 / 修改指令"}
-                          
-                          {/* Required Star for Creative Mode */}
-                          {((mode === 'remix' && freedomLevel === 10) || (freedomLevel > 5 && mode !== 'studio')) && <span className="text-red-500 ml-1 text-sm">* 必填</span>}
-                        </label>
-                        <textarea
-                          value={instruction}
-                          onChange={(e) => setInstruction(e.target.value)}
-                          placeholder={
-                            mode === 'tryon' 
-                            ? (freedomLevel > 0 ? "描述新模特特征：例如‘高冷亚洲超模，黑色丝绒晚礼服’..." : "可选：描述想要强调的氛围...")
-                            : mode === 'studio'
-                            ? "例如：品牌色是深紫色，希望营造神秘奢华的氛围，不要出现花朵。"
-                            : mode === 'remix' && freedomLevel === 10
-                            ? "【必填】请详细描述您想要生成的新场景元素、材质、光影氛围..."
-                            : (freedomLevel > 5 ? "详细描述您想要的画面风格、背景元素..." : "例如：把背景换成大理石材质...")
-                          }
-                          className={`w-full px-5 py-4 rounded-xl border focus:ring-2 outline-none transition-all resize-none h-28 text-base bg-gray-50 leading-relaxed
-                            ${(mode === 'remix' && freedomLevel === 10 && !instruction.trim()) ? 'border-red-300 focus:border-red-500 focus:ring-red-100 placeholder:text-red-300' : 'border-gray-200 focus:ring-gray-100 focus:border-black'}
-                          `}
-                        />
-                      </div>
-                      </>
-                      )}
-                      
-                      {/* Resolution */}
-                      <div>
-                        <label className="block text-base font-bold text-gray-800 mb-3">
-                          分辨率
-                        </label>
-                        <div className="grid grid-cols-3 gap-3">
-                          {(['1K', '2K', '4K'] as ImageSize[]).map((size) => (
-                            <button
-                              key={size}
-                              onClick={() => setImageSize(size)}
-                              className={`
-                                py-3 px-2 rounded-xl text-xs font-bold transition-all truncate
-                                ${imageSize === size 
-                                  ? 'bg-black text-white border border-black shadow-md' 
-                                  : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50'}
-                              `}
-                            >
-                              {RESOLUTION_LABELS[size]}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
                       <button
                         onClick={handleGenerate}
                         disabled={status === 'analyzing' || status === 'generating' || refFiles.length === 0}
@@ -1143,7 +1273,6 @@ function App() {
                           ${status === 'analyzing' || status === 'generating' 
                             ? 'bg-gray-400 cursor-not-allowed shadow-none' 
                             : 'bg-black hover:bg-gray-900 shadow-gray-200'}
-                          ${mode === 'custom_model' && remainingQuota <= 0 && isModelStudioUnlocked ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : ''}
                         `}
                       >
                          {/* Dynamic Border Gradient Animation "AI Flow" */}
@@ -1158,7 +1287,7 @@ function App() {
                               <>
                                 <Loader2 className="animate-spin" size={20} /> 
                                 {mode === 'tryon' ? "正在虚拟佩戴..." 
-                                : mode === 'custom_model' ? "正在生成定妆照..." 
+                                : mode === 'custom_model' ? "正在生成候选人..." 
                                 : mode === 'studio' ? "正在执行棚拍..." 
                                 : "正在生成同款..."}
                               </>
@@ -1169,35 +1298,21 @@ function App() {
                               </>
                             ) : (
                               <>
-                                {mode === 'custom_model' && remainingQuota <= 0 && isModelStudioUnlocked ? (
-                                  <span className="flex items-center justify-center gap-2">
-                                    🚫 本月名额已耗尽
-                                  </span>
-                                ) : (
-                                  <>
-                                    <Sparkles className="fill-white" size={20} /> 
-                                    {mode === 'custom_model' ? `开始孵化 (剩余 ${remainingQuota} 次)`
-                                    : mode === 'studio' ? "咨询 DoP & 获取方案" 
-                                    : "开始生成"}
-                                  </>
-                                )}
+                                <Sparkles className="fill-white" size={20} /> 
+                                {mode === 'custom_model' ? "开始孵化"
+                                : mode === 'studio' ? "咨询 DoP & 获取方案" 
+                                : "开始生成"}
                               </>
                             )}
                          </div>
 
                          {/* Price Tag Badge - Visible except when processing */}
-                         {status !== 'generating' && status !== 'analyzing' && (mode !== 'custom_model' || remainingQuota > 0) && (
+                         {status !== 'generating' && status !== 'analyzing' && mode !== 'custom_model' && (
                              <div className="absolute right-5 bg-white/20 text-white px-3 py-1 rounded-lg text-xs font-mono flex items-center gap-1.5 font-bold z-10">
                                 <Coins size={12} /> -{calculateTotalCost()} BP
                              </div>
                          )}
                       </button>
-                      
-                      {mode === 'custom_model' && isModelStudioUnlocked && (
-                         <div className="text-center mt-3 text-sm text-gray-500 font-medium">
-                           消耗 {calculateTotalCost()} BP / 次 · 仅生成需消耗名额
-                         </div>
-                      )}
                     </>
                     )}
 
@@ -1212,7 +1327,7 @@ function App() {
               </div>
 
               {/* Right Column: Output */}
-              <div className="lg:col-span-8 space-y-6">
+              <div className={`lg:col-span-8 space-y-6 ${mode === 'custom_model' && incubationStep === 'intro' ? 'blur-sm opacity-50 pointer-events-none' : ''}`}>
                 <h2 className="text-2xl font-black text-black mb-6 pl-1 flex items-center gap-2">
                     <span className="w-2 h-8 bg-red-600 rounded-full inline-block"></span>
                     生成结果
@@ -1221,7 +1336,7 @@ function App() {
                 {/* Final Image Container */}
                 <div className="bg-white rounded-[2.5rem] shadow-lg border border-gray-100 overflow-hidden min-h-[900px] flex flex-col relative group">
                   <div className="absolute top-8 right-8 z-10 flex gap-4">
-                    {status === 'success' && (finalImage || generatedImages.length > 0) && (
+                    {status === 'success' && (finalImage || generatedImages.length > 0 || candidateImages.length > 0) && (
                       <>
                         <button
                           onClick={handleReset}
@@ -1229,19 +1344,23 @@ function App() {
                         >
                           <RotateCcw size={18}/> <span className="hidden sm:inline">开始新创作</span>
                         </button>
-                        <a 
-                          href={generatedImages[0] || finalImage} 
-                          download={`uten-${mode}.png`}
-                          className="bg-black text-white hover:bg-gray-800 p-3 rounded-xl shadow-md transition-colors flex items-center gap-2 text-sm font-bold px-6"
-                        >
-                          <Download size={18}/> {generatedImages.length > 0 ? "全部下载" : "下载"}
-                        </a>
+                        
+                        {/* Only show download all if not in selection mode or if signed */}
+                        {(mode !== 'custom_model' || incubationStep === 'signed') && (
+                          <a 
+                            href={generatedImages[0] || finalImage || candidateImages[0]} 
+                            download={`uten-${mode}.png`}
+                            className="bg-black text-white hover:bg-gray-800 p-3 rounded-xl shadow-md transition-colors flex items-center gap-2 text-sm font-bold px-6"
+                          >
+                            <Download size={18}/> {generatedImages.length > 0 ? "全部下载" : "下载"}
+                          </a>
+                        )}
                       </>
                     )}
                   </div>
                   
                   <div className="flex-1 bg-gray-50 flex flex-col items-center justify-center p-12 relative">
-                    {status === 'generating' && (
+                    {(status === 'generating' || status === 'analyzing') && (
                       <div className="text-center space-y-8 w-full max-w-sm">
                         <div className="relative mx-auto w-32 h-32">
                            <svg className="w-full h-full" viewBox="0 0 100 100">
@@ -1266,7 +1385,7 @@ function App() {
                                 style={{ transition: 'stroke-dashoffset 0.5s ease-in-out' }}
                               ></circle>
                            </svg>
-                           <div className="absolute inset-0 flex items-center justify-center">
+                           <div className="absolute inset-0 flex flex-col items-center justify-center">
                               <span className="text-3xl font-black text-gray-900">{progress}%</span>
                            </div>
                         </div>
@@ -1274,17 +1393,124 @@ function App() {
                         <div>
                            <p className="text-gray-900 font-bold mb-2 text-lg">
                              {mode === 'tryon' ? "正在虚拟佩戴..." 
-                             : mode === 'custom_model' ? "正在试镜拍摄..." 
+                             : mode === 'custom_model' ? "正在生成候选人..." 
                              : mode === 'studio' ? "DoP 正在监制拍摄..."
                              : "正在执行生成指令..."}
                            </p>
-                           <p className="text-gray-500 text-sm animate-pulse font-medium">
+                           <p className="text-gray-500 text-sm animate-pulse font-medium mb-4">
                               {progress < 30 ? "初始化生成环境..." : progress < 80 ? "正在渲染光影细节..." : "正在优化最终画质..."}
                            </p>
+
+                           {/* Timer Display */}
+                           {elapsedTime > 0 && (
+                             <div className="flex items-center justify-center gap-4 bg-gray-100/50 p-3 rounded-xl border border-gray-200">
+                                <div className="flex items-center gap-1.5 text-gray-500 text-xs font-bold uppercase tracking-wide">
+                                   <Timer size={14} /> 预计: {estimatedTime}s
+                                </div>
+                                <div className="w-px h-4 bg-gray-300"></div>
+                                <div className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide ${elapsedTime > estimatedTime ? 'text-red-500' : 'text-black'}`}>
+                                   已用: {elapsedTime}s
+                                </div>
+                             </div>
+                           )}
                         </div>
                       </div>
                     )}
                     
+                    {/* CUSTOM MODEL: SELECTION UI */}
+                    {mode === 'custom_model' && incubationStep === 'selecting' && (
+                       <div className="w-full h-full flex flex-col items-center">
+                          <div className="mb-8 text-center space-y-2">
+                              <h3 className="text-2xl font-bold text-gray-900">面试您的候选人</h3>
+                              <p className="text-gray-500">
+                                 当前进度: 已生成 {candidateImages.length} 位 / 上限 {INCUBATION_LIMITS[currentPlan.id]?.gen || 2} 位。
+                                 签约额度: <span className="text-red-600 font-bold">{selectedCandidateIndices.length} / {INCUBATION_LIMITS[currentPlan.id]?.sign || 1}</span>。
+                              </p>
+                          </div>
+                          
+                          {/* Main Gallery of Candidates */}
+                          <div className={`grid gap-6 w-full ${candidateImages.length === 1 ? 'grid-cols-1 max-w-md' : 'grid-cols-2 lg:grid-cols-3'}`}>
+                             {candidateImages.map((img, idx) => {
+                                 const isSigned = selectedCandidateIndices.includes(idx);
+                                 
+                                 return (
+                                     <div 
+                                       key={idx} 
+                                       className={`relative rounded-2xl overflow-hidden shadow-lg border-2 transition-all duration-300 group
+                                         ${isSigned ? 'border-black ring-2 ring-black ring-offset-2' : 'border-gray-100'}
+                                       `}
+                                       onClick={() => handleZoom(img)}
+                                     >
+                                         <img src={img} alt={`Candidate ${idx}`} className="w-full h-auto cursor-zoom-in" />
+                                         
+                                         <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1 rounded-full text-xs font-bold shadow-sm z-20 pointer-events-none">
+                                            候选人 #{idx + 1}
+                                         </div>
+
+                                         {/* Watermark Overlay if NOT signed */}
+                                         {!isSigned && (
+                                            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center opacity-30 select-none overflow-hidden pointer-events-none">
+                                                <div className="absolute inset-0 grid grid-cols-2 grid-rows-6 -rotate-45 scale-150">
+                                                    {Array.from({length: 12}).map((_, i) => (
+                                                        <div key={i} className="flex items-center justify-center text-white font-black text-2xl uppercase tracking-widest whitespace-nowrap">
+                                                            UTen Preview
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                         )}
+
+                                         {/* Action Overlay */}
+                                         <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-3 backdrop-blur-[2px] z-30 pointer-events-none">
+                                             {!isSigned ? (
+                                                <button
+                                                   onClick={(e) => {
+                                                     e.stopPropagation();
+                                                     handleSignSpecificCandidate(idx);
+                                                   }}
+                                                   className="bg-white text-black px-6 py-2.5 rounded-full font-bold text-sm hover:bg-red-500 hover:text-white transition-all shadow-xl flex items-center gap-2 pointer-events-auto"
+                                                >
+                                                   <PenTool size={16} /> 立即签约
+                                                </button>
+                                             ) : (
+                                                <div className="bg-green-500 text-white px-6 py-2 rounded-full font-bold text-sm flex items-center gap-2 shadow-xl">
+                                                   <Check size={16} /> 已签约
+                                                </div>
+                                             )}
+                                             
+                                             {!isSigned && (
+                                                 <div className="flex items-center gap-2 text-white/80 text-xs font-medium bg-black/50 px-3 py-1 rounded-full">
+                                                    <Ban size={12} /> 未签约不可下载
+                                                 </div>
+                                             )}
+                                             <div className="flex items-center gap-1 text-white/60 text-[10px] mt-2">
+                                                <ZoomIn size={12} /> 点击查看大图
+                                             </div>
+                                         </div>
+                                     </div>
+                                 );
+                             })}
+                          </div>
+
+                          <div className="mt-8 flex gap-4">
+                             {candidateImages.length < (INCUBATION_LIMITS[currentPlan.id]?.gen || 2) ? (
+                                 <button
+                                   onClick={handleGenerateCandidates}
+                                   className="bg-black text-white px-8 py-3.5 rounded-xl font-bold text-base shadow-xl hover:bg-gray-800 transition-all flex items-center gap-2"
+                                 >
+                                    <Sparkles size={18} />
+                                    不满意，孵化下一位
+                                 </button>
+                             ) : (
+                                 <div className="bg-gray-100 text-gray-500 px-8 py-3.5 rounded-xl font-bold text-base flex items-center gap-2 cursor-not-allowed">
+                                    <AlertCircle size={18} />
+                                    面试名额已用完
+                                 </div>
+                             )}
+                          </div>
+                       </div>
+                    )}
+
                     {/* Reviewing Studio Plan State for Result Area - Maybe show a placeholder or "Awaiting Confirmation" */}
                     {status === 'reviewing_studio_plan' && (
                         <div className="text-center space-y-5 animate-pulse">
@@ -1293,16 +1519,8 @@ function App() {
                         </div>
                     )}
 
-                    {status === 'analyzing' && (mode === 'custom_model' || mode === 'studio') && (
-                      <div className="text-center space-y-6">
-                        <Loader2 className="animate-spin text-gray-400 mx-auto" size={40} />
-                        <p className="text-gray-500 font-medium text-base">
-                           {mode === 'studio' ? "UTen Vision Pro 正在分析材质 & 设计光影..." : "正在提取模特 DNA..."}
-                        </p>
-                      </div>
-                    )}
-
-                    {status === 'success' && generatedImages.length > 0 && (
+                    {/* STANDARD RESULT GRID (For Remix / Tryon / Studio / Signed Model) */}
+                    {status === 'success' && mode !== 'custom_model' && generatedImages.length > 0 && (
                       <div className={`grid gap-6 w-full ${generatedImages.length === 1 ? 'grid-cols-1' : generatedImages.length <= 4 ? 'grid-cols-2' : 'grid-cols-3'}`}>
                         {generatedImages.map((img, idx) => (
                           <div key={idx} className="relative cursor-zoom-in group" onClick={() => handleZoom(img)}>
@@ -1317,7 +1535,6 @@ function App() {
                                ? (imageCount > 1 
                                    ? `${(brainOutput as StudioBrainOutput).concepts.filter(c => selectedConceptIds.includes(c.id))[Math.floor(idx/imageCount)]?.style_name} #${(idx%imageCount)+1}`
                                    : (brainOutput as StudioBrainOutput).concepts.filter(c => selectedConceptIds.includes(c.id))[idx]?.style_name)
-                               : mode === 'custom_model' ? "定妆照 (Master)"
                                : `Variant #${idx+1}`
                               }
                             </div>
@@ -1337,7 +1554,25 @@ function App() {
                       </div>
                     )}
 
-                    {status !== 'generating' && status !== 'analyzing' && status !== 'reviewing_studio_plan' && !finalImage && generatedImages.length === 0 && (
+                    {/* Display Signed Models if in 'signed' state */}
+                    {mode === 'custom_model' && incubationStep === 'signed' && (
+                         <div className="w-full flex flex-col items-center">
+                            <h3 className="text-2xl font-bold text-gray-900 mb-6">签约完成 (Contract Signed)</h3>
+                            <div className={`grid gap-6 w-full ${selectedCandidateIndices.length === 1 ? 'grid-cols-1 max-w-md' : 'grid-cols-2'}`}>
+                                {selectedCandidateIndices.map(idx => (
+                                    <div key={idx} className="relative cursor-zoom-in group" onClick={() => handleZoom(candidateImages[idx])}>
+                                        <img src={candidateImages[idx]} className="w-full h-auto rounded-2xl shadow-xl" />
+                                        <div className="absolute bottom-4 left-4 bg-black/80 text-white px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-2">
+                                            <Award size={14} className="text-yellow-400" />
+                                            Exclusive Model
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                         </div>
+                    )}
+
+                    {status !== 'generating' && status !== 'analyzing' && status !== 'reviewing_studio_plan' && incubationStep !== 'selecting' && incubationStep !== 'signed' && !finalImage && generatedImages.length === 0 && (
                       <InstructionGuide mode={mode} />
                     )}
                   </div>
@@ -1369,25 +1604,84 @@ function App() {
 
       </main>
 
-      {/* ... (Existing Modals) ... */}
+      {/* --- MODALS --- */}
+
+      {/* Signing Ceremony Modal */}
+      {showSigningCeremony && (
+         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/95 backdrop-blur-md animate-in fade-in duration-700">
+             <div className="text-center text-white relative max-w-2xl w-full p-10">
+                 <div className="absolute inset-0 bg-gradient-to-t from-red-900/20 to-transparent pointer-events-none blur-3xl" />
+                 
+                 <div className="mb-8 animate-in zoom-in duration-700 delay-100">
+                     <div className="w-24 h-24 rounded-full border-4 border-white mx-auto flex items-center justify-center bg-black shadow-[0_0_50px_rgba(255,255,255,0.3)]">
+                         <Award size={48} className="text-yellow-400" />
+                     </div>
+                 </div>
+
+                 <h1 className="text-5xl font-black mb-4 tracking-tighter animate-in slide-in-from-bottom-8 duration-700 delay-200">
+                     WELCOME TO THE AGENCY
+                 </h1>
+                 <p className="text-xl text-gray-400 font-light tracking-widest uppercase mb-12 animate-in slide-in-from-bottom-8 duration-700 delay-300">
+                     Official Model Contract Signed
+                 </p>
+
+                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-12 opacity-0 animate-in fade-in duration-1000 delay-500 fill-mode-forwards">
+                     {selectedCandidateIndices.map(idx => (
+                         <div key={idx} className="relative rounded-lg overflow-hidden border border-white/20 shadow-2xl transform rotate-2 hover:rotate-0 transition-transform">
+                             <img src={candidateImages[idx]} className="w-full h-auto grayscale hover:grayscale-0 transition-all duration-500" />
+                             <div className="absolute bottom-2 right-2">
+                                 <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/e/e4/Signature_sample.svg/1200px-Signature_sample.svg.png" className="w-16 h-auto invert opacity-80" />
+                             </div>
+                         </div>
+                     ))}
+                 </div>
+
+                 <button
+                    onClick={() => setShowSigningCeremony(false)}
+                    className="px-12 py-4 bg-white text-black rounded-full font-bold text-lg hover:bg-gray-200 transition-all animate-in fade-in duration-1000 delay-700 shadow-[0_0_30px_rgba(255,255,255,0.5)]"
+                 >
+                    进入工作台
+                 </button>
+             </div>
+         </div>
+      )}
+
       {isZoomOpen && zoomImageSrc && (
         <div 
           className="fixed inset-0 z-50 bg-white/95 backdrop-blur-sm flex items-center justify-center p-6 animate-in fade-in duration-200"
           onClick={() => setIsZoomOpen(false)}
         >
           <button 
-            className="absolute top-8 right-8 p-3 bg-gray-100 rounded-full hover:bg-red-100 hover:text-red-600 transition-colors"
+            className="absolute top-8 right-8 p-3 bg-gray-100 rounded-full hover:bg-red-100 hover:text-red-600 transition-colors z-50"
             onClick={() => setIsZoomOpen(false)}
           >
             <X size={28} />
           </button>
           
-          <img 
-            src={zoomImageSrc} 
-            alt="Full size" 
-            className="max-w-full max-h-screen object-contain shadow-2xl rounded-xl animate-in zoom-in-95 duration-300"
-            onClick={(e) => e.stopPropagation()} 
-          />
+          <div className="relative max-w-full max-h-screen" onClick={(e) => e.stopPropagation()}>
+             <img 
+               src={zoomImageSrc} 
+               alt="Full size" 
+               className="max-w-full max-h-[90vh] object-contain shadow-2xl rounded-xl animate-in zoom-in-95 duration-300"
+               onContextMenu={(e) => {
+                 // Disable right click if protected
+                 if (isProtectedImage(zoomImageSrc)) e.preventDefault();
+               }}
+             />
+
+             {/* Watermark overlay in zoom view for protected images */}
+             {isProtectedImage(zoomImageSrc) && (
+                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center opacity-30 select-none overflow-hidden pointer-events-none">
+                    <div className="absolute inset-0 grid grid-cols-3 grid-rows-8 -rotate-45 scale-150">
+                        {Array.from({length: 24}).map((_, i) => (
+                            <div key={i} className="flex items-center justify-center text-white font-black text-4xl uppercase tracking-widest whitespace-nowrap">
+                                UTen Preview
+                            </div>
+                        ))}
+                    </div>
+                </div>
+             )}
+          </div>
         </div>
       )}
 

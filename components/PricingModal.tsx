@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
-import { X, Check, Zap, Crown, Coins, Image } from 'lucide-react';
-import { SUBSCRIPTION_PLANS, ANNUAL_SUBSCRIPTION_PLANS, TOP_UP_PACKS, IMAGE_COSTS } from '../constants';
+import { X, Check, Zap, Crown, Coins, Image, UserRound } from 'lucide-react';
+import { SUBSCRIPTION_PLANS, ANNUAL_SUBSCRIPTION_PLANS, TOP_UP_PACKS, IMAGE_COSTS, INCUBATION_LIMITS } from '../constants';
 import { PricingPlan } from '../types';
 
 interface PricingModalProps {
@@ -94,21 +94,22 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, onRecharge
                  // Dynamic Calculations
                  const imageCount1K = Math.floor(plan.points / costPer1K);
                  const avgCost = (plan.price / imageCount1K).toFixed(2);
+                 const incubation = INCUBATION_LIMITS[plan.id] || { gen: 2, sign: 1 };
 
                  return (
-                  <div key={plan.id} className={`relative bg-white rounded-[2rem] p-10 border-2 transition-all duration-300 flex flex-col hover:-translate-y-2 ${plan.recommended ? 'border-red-600 shadow-2xl z-10 scale-105' : 'border-gray-100 hover:border-gray-300 hover:shadow-xl'}`}>
+                  <div key={plan.id} className={`relative bg-white rounded-[2rem] p-8 border-2 transition-all duration-300 flex flex-col hover:-translate-y-2 ${plan.recommended ? 'border-red-600 shadow-2xl z-10 scale-105' : 'border-gray-100 hover:border-gray-300 hover:shadow-xl'}`}>
                     {plan.recommended && (
                       <div className="absolute -top-5 left-1/2 -translate-x-1/2 bg-red-600 text-white text-sm font-black px-6 py-2 rounded-full shadow-lg tracking-widest uppercase">
                         Most Popular
                       </div>
                     )}
                     
-                    <div className="mb-8 text-center">
+                    <div className="mb-6 text-center">
                       <h3 className="font-black text-2xl text-black mb-2">{plan.name}</h3>
                       <p className="text-gray-400 text-sm font-medium">{plan.description}</p>
                     </div>
                     
-                    <div className="mb-10 pb-10 border-b border-gray-100 text-center">
+                    <div className="mb-6 pb-6 border-b border-gray-100 text-center">
                         {/* 1. Original Price & Discount Tag */}
                         {plan.originalPrice && (
                             <div className="flex items-center justify-center gap-3 mb-3">
@@ -132,7 +133,7 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, onRecharge
                         </div>
                         
                         {/* 3. Points Display - Minimal Gray */}
-                        <div className="mt-8 flex items-center justify-center">
+                        <div className="mt-6 flex items-center justify-center">
                             <div className="inline-flex items-center gap-2.5 bg-gray-50 text-gray-900 px-6 py-3 rounded-2xl text-lg font-bold border border-gray-200">
                                 <Coins size={20} className="text-gray-400" />
                                 <span>{plan.points.toLocaleString()} BP</span>
@@ -152,6 +153,30 @@ const PricingModal: React.FC<PricingModalProps> = ({ isOpen, onClose, onRecharge
                                </p>
                              </div>
                          </div>
+                    </div>
+
+                    {/* NEW SECTION: Model Studio Privileges */}
+                    <div className="bg-gray-50 rounded-xl p-4 border border-gray-100 mb-6 relative overflow-hidden group/rights">
+                        <div className="absolute top-0 right-0 bg-black text-white text-[9px] font-bold px-2 py-1 rounded-bl-lg opacity-80">
+                            需付 980BP/次 解锁
+                        </div>
+                        <div className="flex items-center gap-2 mb-3 text-black font-bold text-sm">
+                            <UserRound size={16} />
+                            <span>模特孵化特权</span>
+                        </div>
+                        <div className="space-y-2">
+                            <div className="flex justify-between items-center text-xs">
+                                <span className="text-gray-500">单次生成候选人</span>
+                                <span className="font-bold text-black bg-white px-2 py-0.5 rounded border border-gray-200">{incubation.gen} 位</span>
+                            </div>
+                            <div className="flex justify-between items-center text-xs">
+                                <span className="text-gray-500">单次可签约人数</span>
+                                <span className="font-bold text-red-600 bg-white px-2 py-0.5 rounded border border-red-100">{incubation.sign} 位</span>
+                            </div>
+                        </div>
+                        <p className="text-[10px] text-gray-400 mt-2 text-center scale-90 origin-bottom">
+                            *孵化功能需额外消耗 980BP
+                        </p>
                     </div>
 
                     <div className="flex-1"></div>

@@ -24,41 +24,47 @@ const getAIClient = () => {
 
 /**
  * Retry utility for 503 Overloaded and 500 Internal errors
- * Retries up to 5 times with exponential backoff + jitter
+ * Retries up to 10 times with exponential backoff + jitter
  */
 const retryWithBackoff = async <T>(
   operation: () => Promise<T>, 
-  retries: number = 5, 
-  initialDelay: number = 2000
+  retries: number = 10, 
+  initialDelay: number = 3000
 ): Promise<T> => {
   let attempt = 0;
   while (true) {
     try {
       return await operation();
     } catch (error: any) {
+      const errorString = JSON.stringify(error);
       const isOverloaded = 
         error?.status === 503 || 
         error?.code === 503 ||
         error?.message?.includes('503') || 
-        error?.message?.includes('overloaded') ||
-        error?.message?.includes('UNAVAILABLE');
+        error?.message?.toLowerCase().includes('overloaded') ||
+        error?.message?.includes('UNAVAILABLE') ||
+        errorString.includes('503') ||
+        errorString.includes('UNAVAILABLE');
 
       const isInternalError = 
         error?.status === 500 || 
         error?.code === 500 ||
         error?.message?.includes('500') ||
-        error?.message?.includes('Internal error') ||
-        error?.message?.includes('INTERNAL');
+        error?.message?.toLowerCase().includes('internal error') ||
+        error?.message?.includes('INTERNAL') ||
+        errorString.includes('500');
 
       if ((!isOverloaded && !isInternalError) || attempt >= retries) {
         throw error;
       }
 
       attempt++;
-      // Exponential backoff: 2s, 4s, 8s, 16s, 32s + random jitter to prevent thundering herd
-      const delay = initialDelay * Math.pow(2, attempt - 1) + (Math.random() * 500);
+      // Exponential backoff: 3s, 6s, 12s, 24s... with cap at 30s
+      const backoff = initialDelay * Math.pow(2, attempt - 1);
+      const delay = Math.min(backoff, 30000) + (Math.random() * 1000);
+      
       const errorType = isOverloaded ? 'Overloaded (503)' : 'Internal Error (500)';
-      console.warn(`[Gemini Service] ${errorType}. Retrying in ${Math.round(delay)}ms... (Attempt ${attempt}/${retries})`);
+      console.warn(`[Gemini Service] ${errorType}. Retrying in ${Math.round(delay/1000)}s... (Attempt ${attempt}/${retries})`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
@@ -265,7 +271,37 @@ export const generateRemixImage = async (
           });
         });
 
-        parts.push({ text: `Task: Remove any existing jewelry on the model. Wear ALL provided jewelry objects on the model. CRITICAL: Keep the model's face and skin tone EXACTLY as in the reference image. ${currentPrompt} ${varianceInstruction}` });
+        // Updated Prompt for High Fidelity Try-On (Level 0) with SMART POSE and REALISTIC SIZING logic
+        parts.push({ text: `
+TASK: Intelligent High-Fidelity Virtual Try-On.
+
+1. ANALYZE JEWELRY TYPE:
+   - Identify what kind of jewelry is provided in the "Jewelry Objects" (Ring? Necklace? Earrings? Bracelet?).
+   
+2. REALISTIC SIZING & SCALE (CRITICAL):
+   - **DEFAULT BEHAVIOR**: Assume jewelry is **delicate, small, and realistic** in size (especially ear studs, small rings, thin chains) unless the User Prompt explicitly says "oversized", "huge", "large statement piece", or "avant-garde volume".
+   - **Input Handling**: The input product image might be a macro close-up. **DO NOT** make the item giant on the model. Scale it down to match human anatomy perfectly.
+   - **Earrings**: If they look like studs, they must be small on the earlobe. Do not expand them.
+   - **Rings**: Must look like normal finger rings, not giant brass knuckles, unless specified.
+
+3. SMART POSE ADAPTATION (CRITICAL):
+   - You MUST adapt the model's pose to elegantly showcase ALL provided items.
+   - If there is a RING: The model MUST move a hand near the face or body so the ring is clearly visible and focal.
+   - If there are EARRINGS: Ensure hair is tucked or head is tilted so ears are visible.
+   - If there is a NECKLACE: Ensure neck area is unobstructed.
+   - If multiple items: Combine them naturally (e.g., hand near face showing ring, while head tilt shows earrings).
+
+4. STRICT CONSTRAINTS (LOCK):
+   - BACKGROUND: 100% IDENTICAL to Reference. (Use inpainting logic to fill gaps from pose changes, but keep scene/lighting style identical).
+   - FACE ID: 100% IDENTICAL Identity. Do not change the person.
+   - PRODUCT: 100% IDENTICAL Material/Color to uploaded jewelry images.
+
+5. EXECUTION:
+   - Wear ALL provided jewelry objects on the model.
+   - Remove any *old* jewelry from the reference image.
+   
+${currentPrompt} ${varianceInstruction}
+        ` });
       } else {
         // Strict Remix
         parts.push({ text: "Background/Reference:" });
@@ -327,8 +363,8 @@ export const generateRemixImage = async (
   });
 
   try {
-    // Use concurrency limit of 3 for remix generation
-    return await runWithConcurrency(taskDefinitions, 3, onProgress);
+    // Use concurrency limit of 1 for remix generation to avoid overload
+    return await runWithConcurrency(taskDefinitions, 1, onProgress);
   } catch (e: any) {
     console.error("Image generation failed:", e);
     if (e.message?.includes("403") || e.status === 403) {
@@ -394,8 +430,8 @@ export const generateStudioPhotos = async (
   }
 
   try {
-    // Use concurrency limit of 3 for studio generation
-    return await runWithConcurrency(taskDefinitions, 3, onProgress);
+    // Use concurrency limit of 1 for studio generation
+    return await runWithConcurrency(taskDefinitions, 1, onProgress);
   } catch (e: any) {
     console.error("Studio generation failed:", e);
      if (e.message?.includes("403") || e.status === 403) {
@@ -412,6 +448,7 @@ export const generateVirtualModel = async (
     freedomLevel: number,
     imageSize: ImageSize,
     aspectRatio: AspectRatio,
+    count: number,
     onProgress: (progress: number) => void
   ): Promise<string[]> => {
   await checkAndSelectApiKey();
@@ -439,47 +476,42 @@ export const generateVirtualModel = async (
   const getFidelityInstruction = (level: number) => {
     // For Frontal View:
     if (level === 0) {
+      // Strict Clone
       return "CRITICAL: STRICTLY preserve the exact identity, facial structure, and pixel details of the reference image. Do not change the person.";
-    } else if (level <= 2) {
-      return "Maintain strong resemblance to the reference image. You may optimize lighting and skin texture, but the person must look like the reference.";
-    } else if (level <= 4) {
-      // More aggressive change instruction
-      return "Create a 'Cousin' or 'Sister' look. Use the reference for bone structure, but noticeably CHANGE the specific facial features (eyes, nose, mouth) to create a distinct new face. It should NOT look like the exact same person.";
-    } else if (level <= 7) {
-      return "Use the reference image ONLY for lighting and general vibe. Create a completely NEW face based on the DNA text description. The person should look different.";
+    } else if (level === 5) { // Updated to Level 5 "Vibe/Cousin"
+      // Stronger deviation than before
+      return "Create a 'Vibe Twin' or 'Cousin'. The model must have the SAME demographic and general style (hair, age, skin tone) as the reference, but MUST have DISTINCTLY DIFFERENT facial features (eyes, nose, mouth). It should look like a different person who could be related. Do NOT just copy the face.";
     } else {
+      // New Model
       return "Ignore the reference image person entirely. Create a new model based ONLY on the text DNA.";
     }
   };
 
-  // 3. Define Views
-  const viewConfigs = {
-    frontal: {
-      prompt: "**VIEW: FULL BODY FRONT** (0 degrees). The model is facing the camera directly. Symmetrical pose. Eyes looking at camera.",
-      negative: "side view, looking away, profile, asymmetric, turned head"
-    }
-  };
-
-  // 4. Generator Helper
-  const generateView = async (viewConfig: {prompt: string, negative: string}, refB64: string | null, fidelity: string): Promise<string> => {
+  // 3. Define Views (Now handling count)
+  const taskDefinitions = Array.from({ length: count }, (_, i) => async () => {
     const parts: any[] = [];
     
-    if (refB64) {
+    if (freedomLevel <= 8) {
       parts.push({
         inlineData: {
           mimeType: "image/jpeg",
-          data: refB64
+          data: refImageBase64
         }
       });
     }
 
-    const fullNegativePrompt = `shoes, socks, jewelry, earrings, necklace, accessories, heavy makeup, fancy dress, complex background, distorted face, low quality, bad anatomy, blur, merged bodies, missing limbs, ${viewConfig.negative}`;
+    const varianceInstruction = count > 1 
+        ? `\n\n [Candidate ${i + 1}]: Create a distinct variation. Change the pose slightly, or the facial expression nuance, to provide variety for casting.`
+        : "";
+
+    const fullNegativePrompt = `shoes, socks, jewelry, earrings, necklace, accessories, heavy makeup, fancy dress, complex background, distorted face, low quality, bad anatomy, blur, merged bodies, missing limbs, side view, looking away, profile, asymmetric`;
 
     parts.push({ text: `
-      ${viewConfig.prompt}
-      ${fidelity}
+      **VIEW: FULL BODY FRONT** (0 degrees). The model is facing the camera directly. Symmetrical pose. Eyes looking at camera.
+      ${getFidelityInstruction(freedomLevel)}
       
-      ${basePrompt} 
+      ${basePrompt}
+      ${varianceInstruction}
       
       Negative Prompt: ${fullNegativePrompt}
     `});
@@ -502,26 +534,11 @@ export const generateVirtualModel = async (
       }
     }
     throw new Error("Generation failed");
-  };
+  });
 
   try {
-    // --- EXECUTION STRATEGY ---
-    onProgress(10); // Start
-
-    // Generate Frontal Only
-    const frontalFidelity = getFidelityInstruction(freedomLevel);
-    const useUploadAsRef = freedomLevel <= 8; 
-    
-    const frontalResult = await generateView(
-      viewConfigs.frontal, 
-      useUploadAsRef ? refImageBase64 : null, 
-      frontalFidelity
-    );
-    
-    onProgress(100); // Done
-
-    return [frontalResult];
-
+    // Use concurrency limit of 1 to be safe against overload
+    return await runWithConcurrency(taskDefinitions, 1, onProgress);
   } catch (e: any) {
       console.error("Model generation failed:", e);
       if (e.message?.includes("403") || e.status === 403) {

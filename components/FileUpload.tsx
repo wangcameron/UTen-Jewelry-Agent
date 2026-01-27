@@ -1,3 +1,4 @@
+
 import React, { useRef, useState, useEffect } from 'react';
 import { Upload, X, CheckCircle, Image as ImageIcon, Plus } from 'lucide-react';
 
@@ -8,6 +9,7 @@ interface FileUploadProps {
   multiple?: boolean;
   accept?: string;
   maxFiles?: number;
+  minimal?: boolean;
 }
 
 const FileUpload: React.FC<FileUploadProps> = ({ 
@@ -16,7 +18,8 @@ const FileUpload: React.FC<FileUploadProps> = ({
   onFilesChange, 
   multiple = false,
   accept = "image/*",
-  maxFiles = 1
+  maxFiles = 1,
+  minimal = false
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -147,10 +150,14 @@ const FileUpload: React.FC<FileUploadProps> = ({
                 {multiple ? <ImageIcon size={20} /> : <Upload size={20} />}
             </div>
             
-            <p className="text-sm font-bold text-gray-900 mb-1">
-              {multiple ? "点击上传多张" : "点击上传图片"}
-            </p>
-            <p className="text-xs text-gray-400">支持 JPG, PNG (Max 10MB)</p>
+            {!minimal && (
+              <>
+                <p className="text-sm font-bold text-gray-900 mb-1">
+                  {multiple ? "点击上传多张" : "点击上传图片"}
+                </p>
+                <p className="text-xs text-gray-400">支持 JPG, PNG (Max 10MB)</p>
+              </>
+            )}
           </div>
         )}
       </div>
